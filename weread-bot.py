@@ -4,7 +4,7 @@
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.2.9
+    版本: 0.3.1
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -61,7 +61,7 @@ import schedule
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-VERSION = "0.2.9"
+VERSION = "0.3.1"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 
@@ -77,6 +77,8 @@ class NotificationMethod(Enum):
     WEWORK = "wework"
     DINGTALK = "dingtalk"
     GOTIFY = "gotify"
+    SERVERCHAN3 = "serverchan3"
+    PUSHDEER = "pushdeer"
 
 
 class ReadingMode(Enum):
@@ -201,6 +203,14 @@ class NotificationConfig:
 
 
 @dataclass
+class HackConfig:
+    """Hack 配置"""
+    # Cookie刷新时ql属性设置
+    # 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
+    cookie_refresh_ql: bool = False
+
+
+@dataclass
 class WeReadConfig:
     """微信读书配置主类"""
     # App 基本配置
@@ -225,6 +235,7 @@ class WeReadConfig:
     notification: NotificationConfig = field(
         default_factory=NotificationConfig
     )
+    hack: HackConfig = field(default_factory=HackConfig)
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -510,6 +521,14 @@ class ConfigManager:
                 "INCLUDE_STATISTICS", True
             ),
             channels=self._load_notification_channels(config_data),
+        )
+
+        # 加载hack配置
+        config.hack = HackConfig(
+            cookie_refresh_ql=self._get_bool_config(
+                config_data, "hack.cookie_refresh_ql",
+                "HACK_COOKIE_REFRESH_QL", False
+            ),
         )
 
         # 加载调度配置
@@ -936,10 +955,41 @@ class ConfigManager:
                 enabled=True,
                 config=gotify_config
             ))
-        
+
+        # Server酱³
+        if os.getenv("SERVERCHAN3_UID") and os.getenv("SERVERCHAN3_SENDKEY"):
+            serverchan3_config = {
+                "uid": os.getenv("SERVERCHAN3_UID"),
+                "sendkey": os.getenv("SERVERCHAN3_SENDKEY")
+            }
+            if os.getenv("SERVERCHAN3_TAGS"):
+                serverchan3_config["tags"] = os.getenv("SERVERCHAN3_TAGS")
+            if os.getenv("SERVERCHAN3_SHORT"):
+                serverchan3_config["short"] = os.getenv("SERVERCHAN3_SHORT")
+
+            channels.append(NotificationChannel(
+                name="serverchan3",
+                enabled=True,
+                config=serverchan3_config
+            ))
+
+        # PushDeer
+        if os.getenv("PUSHDEER_PUSHKEY"):
+            pushdeer_config = {
+                "pushkey": os.getenv("PUSHDEER_PUSHKEY")
+            }
+            if os.getenv("PUSHDEER_TYPE"):
+                pushdeer_config["type"] = os.getenv("PUSHDEER_TYPE")
+
+            channels.append(NotificationChannel(
+                name="pushdeer",
+                enabled=True,
+                config=pushdeer_config
+            ))
+
         if channels:
             logging.info(f"✅ 从环境变量自动创建了 {len(channels)} 个通知通道")
-        
+
         return channels
 
     def _load_user_configs(self, config_data: dict) -> List[UserConfig]:
@@ -1598,6 +1648,10 @@ class NotificationService:
                 return self._send_dingtalk(message, channel.config)
             elif channel.name == "gotify":
                 return self._send_gotify(message, channel.config)
+            elif channel.name == "serverchan3":
+                return self._send_serverchan3(message, channel.config)
+            elif channel.name == "pushdeer":
+                return self._send_pushdeer(message, channel.config)
             else:
                 logging.warning(f"⚠️ 未知的通知通道: {channel.name}")
                 return False
@@ -1941,6 +1995,49 @@ class NotificationService:
 
         return self._send_http_notification(url, data, "Gotify", headers=headers)
 
+    def _send_serverchan3(self, message: str, config: Dict[str, Any]) -> bool:
+        """发送Server酱³通知"""
+        if not config.get("uid") or not config.get("sendkey"):
+            logging.error("❌ Server酱³ UID或SendKey未配置")
+            return False
+
+        # 构建Server酱³ API URL
+        uid = config["uid"]
+        sendkey = config["sendkey"]
+        url = f"https://{uid}.push.ft07.com/send/{sendkey}.send"
+
+        # 准备请求数据
+        data = {
+            "text": "WeRead Bot 通知",
+            "desp": message
+        }
+
+        # 添加可选参数
+        if config.get("tags"):
+            data["tags"] = config["tags"]
+        if config.get("short"):
+            data["short"] = config["short"]
+
+        return self._send_http_notification(url, data, "Server酱³")
+
+    def _send_pushdeer(self, message: str, config: Dict[str, Any]) -> bool:
+        """发送PushDeer通知"""
+        if not config.get("pushkey"):
+            logging.error("❌ PushDeer PushKey未配置")
+            return False
+
+        url = "https://api2.pushdeer.com/message/push"
+
+        # 准备请求数据
+        data = {
+            "pushkey": config["pushkey"],
+            "text": "WeRead Bot 通知",
+            "desp": message,
+            "type": config.get("type", "markdown")
+        }
+
+        return self._send_http_notification(url, data, "PushDeer")
+
 
 class CronParser:
     """Cron表达式解析器"""
@@ -1950,6 +2047,7 @@ class CronParser:
         """将cron表达式转换为schedule调度"""
         # 简化的cron解析，支持基本格式：分 时 日 月 周
         # 例如: "0 */2 * * *" 表示每2小时执行一次
+        # 支持多时间点: "30 9,18 * * *" 表示每天9:30和18:30执行
         parts = cron_expression.strip().split()
         if len(parts) != 5:
             logging.error(f"❌ 无效的cron表达式: {cron_expression}")
@@ -1968,6 +2066,31 @@ class CronParser:
                 )
                 logging.info(f"✅ 已设置定时任务: 每{interval}小时执行一次")
                 return True
+
+            # 处理多时间点执行 (如: 30 9,18 * * *)
+            elif "," in hour and minute.isdigit():
+                hours = [h.strip() for h in hour.split(",")]
+                valid_hours = []
+                
+                for h in hours:
+                    if h.isdigit() and 0 <= int(h) <= 23:
+                        valid_hours.append(int(h))
+                    else:
+                        logging.warning(f"⚠️ 跳过无效小时: {h}")
+                
+                if valid_hours:
+                    for h in valid_hours:
+                        time_str = f"{h:02d}:{minute.zfill(2)}"
+                        schedule.every().day.at(time_str).do(
+                            lambda t=time_str: asyncio.create_task(
+                                WeReadApplication.run_single_session()
+                            )
+                        )
+                    logging.info(f"✅ 已设置定时任务: 每天{', '.join([f'{h:02d}:{minute}' for h in valid_hours])}执行")
+                    return True
+                else:
+                    logging.error(f"❌ 没有有效的小时时间点: {hour}")
+                    return False
 
             # 处理固定时间执行
             elif hour.isdigit() and minute.isdigit():
@@ -2314,7 +2437,6 @@ class WeReadSessionManager:
 
     # 微信读书API常量
     KEY = "3c5c8717f3daf09iop3423zafeqoi"
-    COOKIE_DATA = {"rq": "%2Fweb%2Fbook%2Fread"}
     READ_URL = "https://weread.qq.com/web/book/read"
     RENEW_URL = "https://weread.qq.com/web/login/renewal"
     FIX_SYNCKEY_URL = "https://weread.qq.com/web/book/chapterInfos"
@@ -2357,6 +2479,9 @@ class WeReadSessionManager:
             self.effective_reading_config
         )
         self.session_stats = ReadingSession(user_name=self.user_name)
+
+        # 动态创建cookie数据，使用配置中的ql值
+        self.cookie_data = {"rq": "%2Fweb%2Fbook%2Fread", "ql": config.hack.cookie_refresh_ql}
 
         self.headers = {}
         self.cookies = {}
@@ -2786,7 +2911,7 @@ class WeReadSessionManager:
                 self.RENEW_URL,
                 headers=self.headers,
                 cookies=self.cookies,
-                data=json.dumps(self.COOKIE_DATA, separators=(',', ':')),
+                data=json.dumps(self.cookie_data, separators=(',', ':')),
                 timeout=30
             )
 

@@ -19,7 +19,7 @@ WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真
 - 🤖 **高级行为模拟**：模拟真实用户阅读行为，包括阅读速度变化、中途休息等
 - ⚙️ **多样化配置**：支持配置文件、环境变量、命令行参数三种设置方式，灵活适配各种部署环境
 - 📊 **详细统计报告**：提供完整的阅读数据、成功率统计和多维度分析
-- 📱 **多平台消息推送**：支持 PushPlus、Telegram、WxPusher、Apprise、Bark、Ntfy、飞书、企业微信、钉钉、Gotify 等通知服务
+- 📱 **多平台消息推送**：支持 PushPlus、Telegram、WxPusher、Apprise、Bark、Ntfy、飞书、企业微信、钉钉、Gotify、Server酱³、PushDeer 等通知服务
 - 🔧 **智能配置解析**：自动从 CURL 命令提取请求数据、headers 和 cookies，无需手动配置
 - 🎯 **精准请求模拟**：使用真实抓包数据，动态生成签名和校验，大幅提高成功率
 - 🕐 **灵活定时任务**：支持 cron 表达式定时执行，可自定义执行频率和时间
@@ -224,6 +224,28 @@ open config-generator.html
 | 重试延迟 | `RETRY_DELAY` | `5-15` | 重试间隔（秒） |
 | 频率限制 | `RATE_LIMIT` | `10` | 请求频率（次/分钟） |
 
+### Hack配置
+
+Hack配置用于解决特殊兼容性问题，包含以下选项：
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| Cookie刷新QL属性 | `HACK_COOKIE_REFRESH_QL` | `false` | Cookie刷新时ql属性值设置 |
+
+**详细说明：**
+- `cookie_refresh_ql`: 控制Cookie刷新请求中的`ql`参数值
+  - `false` (默认): 使用`"ql": false`
+  - `true`: 使用`"ql": true`
+- 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
+- 如果遇到cookie刷新失败的问题，可以尝试切换此配置的值
+
+**使用场景：**
+```yaml
+# config.yaml 示例
+hack:
+  cookie_refresh_ql: false  # 或 true，根据您的环境测试确定
+```
+
 ### 通知配置
 
 | 配置项 | 环境变量 | 默认值 | 说明 |
@@ -258,6 +280,12 @@ open config-generator.html
 | | `token` | `GOTIFY_TOKEN` | Gotify应用令牌 |
 | | `priority` | `GOTIFY_PRIORITY` | 消息优先级（1-10） |
 | | `title` | `GOTIFY_TITLE` | 消息标题 |
+| Server酱³ | `uid` | `SERVERCHAN3_UID` | Server酱³ UID |
+| | `sendkey` | `SERVERCHAN3_SENDKEY` | Server酱³ SendKey |
+| | `tags` | `SERVERCHAN3_TAGS` | 标签（可选，用|分隔） |
+| | `short` | `SERVERCHAN3_SHORT` | 简短描述（可选） |
+| PushDeer | `pushkey` | `PUSHDEER_PUSHKEY` | PushDeer PushKey |
+| | `type` | `PUSHDEER_TYPE` | 消息类型：text/markdown |
 
 ### 通知方式详细说明
 
@@ -281,6 +309,7 @@ open config-generator.html
 - 配置：设置 `APPRISE_URL`，格式如：
   - Discord: `discord://webhook_id/webhook_token`
   - Email: `mailto://user:pass@domain.com`
+  - 自部署 Apprise 服务器: `apprises://your_apprise_server.com/your_apprise_token/?tags=pro`
   - 更多格式见：[Apprise文档](https://github.com/caronc/apprise)
 
 #### Bark（iOS推送）
@@ -331,6 +360,30 @@ open config-generator.html
 - 示例：`https://gotify.example.com` + `your_app_token`
 - 官网：https://gotify.net/
 
+#### Server酱³（Server酱）
+- 获取方式：
+  1. 访问 [Server酱³](https://sc3.ft07.com/) 注册账号
+  2. 获取 UID 和 SendKey
+- 配置：设置 `SERVERCHAN3_UID` 和 `SERVERCHAN3_SENDKEY`
+- 标签：可选设置 `SERVERCHAN3_TAGS`，支持多个标签用|分隔
+- 简短描述：可选设置 `SERVERCHAN3_SHORT`，用于显示简要信息
+- 官网：https://sc3.ft07.com/
+- 文档：https://doc.sc3.ft07.com/
+
+#### PushDeer（开源推送服务）
+- 获取方式：
+  1. 访问 [PushDeer](https://www.pushdeer.com/) 或下载 iOS App
+  2. 注册账号并获取 PushKey
+- 配置：设置 `PUSHDEER_PUSHKEY`
+- 代理：支持HTTP/HTTPS代理（可选）
+- 消息格式：支持 纯文本和Markdown
+- 官网：https://www.pushdeer.com/
+- 文档：https://www.pushdeer.com/official.html
+
+#### 自定义通知服务
+
+如果没有找到合适的通知服务，可以通过 Apprise 配置需要的通知服务，如 **Email** 通知设置格式 `mailto://user:pass@domain.com`。配置请参考 [Apprise文档](https://github.com/caronc/apprise)。
+
 ### 定时任务配置（scheduled模式）
 | 配置项 | 环境变量 | 默认值 | 说明 |
 |--------|----------|--------|------|
@@ -373,6 +426,8 @@ schedule:
 - `"30 9 * * *"` - 每天9:30执行
 - `"0 * * * *"` - 每小时执行
 - `"0 9,18 * * *"` - 每天9点和18点执行
+- `"30 9,18 * * *"` - 每天9:30和18:30执行（多时间点）
+- `"0 8,12,18 * * *"` - 每天8:00、12:00、18:00执行
 
 ### 3. 守护进程模式 (daemon)
 
